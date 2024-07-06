@@ -17,6 +17,7 @@ import aiosqlite
 import sqlite3
 import tetris
 import spotify as spot
+import printToFile
 
 from pynput.keyboard import Key, Listener
 from EmojiCodes import EMOJI_CODES
@@ -27,18 +28,24 @@ from nextcord.ui import Button, View
 from nextcord.ext import menus, commands
 from nextcord.abc import GuildChannel
 from databases import Database
-from dslash import Choices, CommandClient, CommandGroup, CommandSubGroup, subcommand
 
-popular_words = open("main_words.txt").read().splitlines()
-all_words = set(word.strip() for word in open("words.txt"))
+#imports all the level information
+#imports all posible levels and splits them be line
+levels = open("txts/levels.txt").read().splitlines()
+#imports the xp needed to reach the next level and splits them be line
+xp = open("txts/xp.txt").read().splitlines()
+#imports the starting xp (which is always 0), for when you reach the next level and splits them by line
+startingXP = open("txts/start.txt").read().splitlines()
 
-moves = open("words.txt").read().splitlines()
+#imports the words for wordle
+#words used in wordle
+popular_words = open("txts/main_words.txt").read().splitlines()
+#words not used but are still valid in wordle
+all_words = set(word.strip() for word in open("txts/words.txt"))
 
 logging.basicConfig(level=logging.INFO)
 
 load_dotenv()
-
-
 
 activity = nextcord.Activity(type=nextcord.ActivityType.listening)
 intents = nextcord.Intents.all()
@@ -54,20 +61,15 @@ extensions = [
     'cogs.play',
     'cogs.queue'
 ]
-UserLevel = None
 GUILD_IDS = (
     [int(guild_id) for guild_id in os.getenv("GUILD_IDS", "").split(",")]
     if os.getenv("GUILD_IDS", None)
     else nextcord.utils.MISSING
 )
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    async with aiosqlite.connect("level.db") as db:
-        async with db.cursor() as cursor:
-            #creates the data base if it does not exist
-            await cursor.execute("CREATE TABLE IF NOT EXISTS level(userName STRING, userID INTEGER, guildName STRING, guildID INTEGER, userLevel INTERGER, currentXpToNextLevel INTEGER, TotalXP INTEGER)")
-        await db.commit()
 
 #arrow buttons(up, down, left, right) & pause/play buttons
 
@@ -101,14 +103,9 @@ class mainButtons(menus.ButtonMenu):
         pass
 
 #wordle command
-
-class db(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
     WordleUserStreak = None
 
-    def generate_colored_word(guess: str, answer: str) -> str:
+    async def generate_colored_word(guess: str, answer: str) -> str:
         colored_word = [EMOJI_CODES["gray"][letter] for letter in guess]
         guess_letters: List[Optional[str]] = list(guess)
         answer_letters: List[Optional[str]] = list(answer)
@@ -124,15 +121,13 @@ class db(commands.Cog):
         return "".join(colored_word)
 
 
-    def generate_blanks_wordle() -> str:
+    async def generate_blanksWordle() -> str:
         return "\N{WHITE MEDIUM SQUARE}" * 5
 
 
-    def generate_puzzle_embed(user: nextcord.User, puzzle_id: int) -> nextcord.Embed:
-        generate_blanks_wordle = db.generate_blanks_wordle()
-
+    async def generate_puzzle_embed(user: nextcord.User, puzzle_id: int) -> nextcord.Embed:
         embed = nextcord.Embed(title="Wordle", timestamp=date)
-        embed.description = "\n".join([generate_blanks_wordle()] * 6)
+        embed.description = "\n".join([db.generate_blanksWordle()] * 6)
         embed.set_author(name=user.name, icon_url=user.display_avatar.url)
         embed.set_footer(
             text=f"ID: {puzzle_id} ︱ To play, use the command /wordle!\n"
@@ -140,45 +135,45 @@ class db(commands.Cog):
         )
         return embed
 
-    def update_embed(embed: nextcord.Embed, guess: str) -> nextcord.Embed:
-        generate_blanks_wordle = db.generate_blanks_wordle()
-        generate_colored_word = db.generate_colored_word()
-        WordleUserStreak = db.WordleUserStreak
-
+    async def update_embed(embed: nextcord.Embed, guess: str) -> nextcord.Embed:
         puzzle_id = int(embed.footer.text.split()[1])
         answer = popular_words[puzzle_id]
-        colored_word = generate_colored_word(guess, answer)
-        empty_slot = generate_blanks_wordle()
+        colored_word = db.generate_colored_word(guess, answer)
+        empty_slot = db.generate_blanks_tetris()
         embed.description = embed.description.replace(empty_slot, colored_word, 1)
         num_empty_slots = embed.description.count(empty_slot)
         if guess == answer:
-            #when someone gets the answer with 6 trys
-            if num_empty_slots == 0:
-                embed.description += "\n\nThat was close!"
-                WordleUserStreak + 1
-            #when someone gets the answer with 5 trys
-            if num_empty_slots == 1:
-                embed.description += "\n\nGreat!"
-                WordleUserStreak + 1
-            #when someone gets the answer with 4 trys
-            if num_empty_slots == 2:
-                embed.description += "\n\nSplendid!"
-                WordleUserStreak + 1
-            #when someone gets the answer with 3 trys
-            if num_empty_slots == 3:
-                embed.description += "\n\nWOW!"
-                WordleUserStreak + 1
-            #when someone gets the answer with 2 trys
-            if num_empty_slots == 4:
-                embed.description += "\n\nYour a Genius!"
-                WordleUserStreak + 1
-            #when someone gets the answer with 1 try
-            if num_empty_slots == 5:
-                embed.description += "\n\nImpossible!"
-                WordleUserStreak + 1
+            async with aiosqlite.connect('level.db') as db:
+                async with db.cursor() as cursor:
+                    #when someone gets the answer with 6 trys
+                    if num_empty_slots == 0:
+                        embed.description += "\n\nThat was close!\nYou have earned 100 xp"
+                        UserXp += 100
+                    #when someone gets the answer with 5 trys
+                    if num_empty_slots == 1:
+                        embed.description += "\n\nGreat!\nYou have earned 200 xp"
+                        UserXp += 200
+                    #when someone gets the answer with 4 trys
+                    if num_empty_slots == 2:
+                        embed.description += "\n\nSplendid!\nYou have earned 300 xp"
+                        UserXp += 300
+                    #when someone gets the answer with 3 trys
+                    if num_empty_slots == 3:
+                        embed.description += "\n\nWOW!\nYou have earned 400 xp"
+                        UserXp += 400
+                    #when someone gets the answer with 2 trys
+                    if num_empty_slots == 4:
+                        embed.description += "\n\nYour a Genius!\nYou have earned 500 xp"
+                        UserXp += 500
+                    #when someone gets the answer with 1 try
+                    if num_empty_slots == 5:
+                        embed.description += "\n\nImpossible!\nYou have earned 600 xp"
+                        UserXp += 600
+                    db.commit()
         #when someone does not get the answer in 6 trys
         elif num_empty_slots == 0:
-            embed.description += f"\n\nThe answer was {answer}!"
+            embed.description += f"\n\nThe answer was {answer}!\nYou have lost 300 xp"
+            UserXp -= 300
         return embed
 
 
@@ -276,14 +271,18 @@ class db(commands.Cog):
         return True
 
     @bot.slash_command(name="wordle", description="Play a game of Wordle\nright now it is being used as db testing", guild_ids=GUILD_IDS)
-    async def wordle(interaction: nextcord.Interaction, user: nextcord.User, guild: nextcord.Guild):
+    async def wordle(interaction: nextcord.Interaction):
         async with aiosqlite.connect("level.db") as db:
             async with db.cursor() as cursor:
-                query = 'INSERT INTO level VALUES (?, ?, ?, ?, ?, ?, ?)'
-                await cursor.execute(query, (user.name, user.id, guild.name, guild.id, , , ))
-                select = await cursor.execute('SELECT level FROM level')
-                fetch = await select.fetchall()
+                await cursor.execute(f"CREATE TABLE IF NOT EXISTS {interaction.user.name} (userName VARCHAR(255), userID INTEGER, guildName VARCHAR(255), guildID INTEGER, userLevel INTERGER, currentXpToNextLevel INTEGER, TotalXP INTEGER)")
             await db.commit()
+        async with aiosqlite.connect("level.db") as dbase:
+            async with dbase.cursor() as cursor:
+                query = f'INSERT INTO {interaction.user.name} VALUES (?, ?, ?, ?, ?, ?, ?)'
+                await cursor.execute(query, (interaction.user.name, interaction.user.id, interaction.guild.name, interaction.guild_id, levels, startingXP, xp))
+                select = await cursor.execute('SELECT * FROM level')
+                fetch = await select.fetchall()
+            await dbase.commit()
         await interaction.response.send_message(f"succsesful\n{fetch}")
 
     @bot.event
